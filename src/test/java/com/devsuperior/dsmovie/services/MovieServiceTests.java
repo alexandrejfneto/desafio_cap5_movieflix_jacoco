@@ -1,12 +1,14 @@
 package com.devsuperior.dsmovie.services;
 
+import static org.mockito.ArgumentMatchers.any;
+
 import java.util.List;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentMatchers;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -19,82 +21,164 @@ import org.springframework.test.context.junit.jupiter.SpringExtension;
 import com.devsuperior.dsmovie.dto.MovieDTO;
 import com.devsuperior.dsmovie.entities.MovieEntity;
 import com.devsuperior.dsmovie.repositories.MovieRepository;
+import com.devsuperior.dsmovie.services.exceptions.DatabaseException;
+import com.devsuperior.dsmovie.services.exceptions.ResourceNotFoundException;
 import com.devsuperior.dsmovie.tests.MovieFactory;
+
+import jakarta.persistence.EntityNotFoundException;
 
 @ExtendWith(SpringExtension.class)
 public class MovieServiceTests {
-	
+
 	@InjectMocks
 	private MovieService service;
-	
+
 	@Mock
 	private MovieRepository repository;
-	
-	private String existingTitle, nonExistingTitle;
-	
+
+	private String existingTitle;
+
+	private Long existingMovieId, nonExistingMovieId, dependentMovieId;
+
 	private PageImpl<MovieEntity> page;
-	
+
 	private MovieEntity movieEntity;
-	
+
 	private MovieDTO movieDTO;
-	
+
 	private Pageable pageable;
-	
+
 	@BeforeEach
-	void setup () throws Exception {
-		
+	void setup() throws Exception {
+
 		existingTitle = "titulo";
-		nonExistingTitle = "titulo02";
+		existingMovieId = 1L;
+		nonExistingMovieId = 2L;
+		dependentMovieId = 3L;
 		movieEntity = MovieFactory.createMovieEntity();
 		movieDTO = new MovieDTO(movieEntity);
 		page = new PageImpl<>(List.of(movieEntity));
 		pageable = PageRequest.of(0, 10);
+
+		Mockito.when(repository.searchByTitle(existingTitle, pageable)).thenReturn(page);
+
+		Mockito.when(repository.findById(existingMovieId)).thenReturn(Optional.of(movieEntity));
+		Mockito.when(repository.findById(nonExistingMovieId)).thenReturn(Optional.empty());
+
+		Mockito.when(repository.save(any())).thenReturn(movieEntity);
+
+		Mockito.when(repository.getReferenceById(existingMovieId)).thenReturn(movieEntity);
+		Mockito.when(repository.getReferenceById(nonExistingMovieId)).thenThrow(EntityNotFoundException.class);
 		
-		Mockito.when(repository.searchByTitle(existingTitle, (Pageable)ArgumentMatchers.any())).thenReturn(page);
-				
+		Mockito.when(repository.existsById(existingMovieId)).thenReturn(true);
+		Mockito.when(repository.existsById(nonExistingMovieId)).thenReturn(false);
+		Mockito.when(repository.existsById(dependentMovieId)).thenReturn(true);
+		
+		Mockito.doNothing().when(repository).deleteById(existingMovieId);
+		Mockito.doThrow(ResourceNotFoundException.class).when(repository).deleteById(nonExistingMovieId);
+		Mockito.doThrow(DatabaseException.class).when(repository).deleteById(dependentMovieId);
+
 	}
-	
+
 	@Test
 	public void findAllShouldReturnPagedMovieDTO() {
-		
-		//Pageable pageable  = PageRequest.of(0, 10);
-		
+
 		Page<MovieDTO> result = service.findAll(existingTitle, pageable);
-		
+
 		Assertions.assertNotNull(result);
 		Mockito.verify(repository).searchByTitle(existingTitle, pageable);
+
+	}
+
+	@Test
+	public void findByIdShouldReturnMovieDTOWhenIdExists() {
+
+		MovieDTO result = service.findById(existingMovieId);
+
+		Assertions.assertNotNull(result);
+		Assertions.assertEquals(result.getTitle(), movieDTO.getTitle());
+		Mockito.verify(repository).findById(existingMovieId);
+
+	}
+
+	@Test
+	public void findByIdShouldThrowResourceNotFoundExceptionWhenIdDoesNotExist() {
+
+		Assertions.assertThrows(ResourceNotFoundException.class, () -> {
+
+			service.findById(nonExistingMovieId);
+
+		});
+		Mockito.verify(repository).findById(nonExistingMovieId);
+
+	}
+
+	@Test
+	public void insertShouldReturnMovieDTO() {
+
+		MovieDTO result = service.insert(movieDTO);
+
+		Assertions.assertNotNull(result);
+		Assertions.assertEquals(result.getTitle(), movieEntity.getTitle());
+
+	}
+
+	@Test
+	public void updateShouldReturnMovieDTOWhenIdExists() {
+
+		MovieDTO result = service.update(existingMovieId, movieDTO);
+
+		Assertions.assertNotNull(result);
+		Assertions.assertEquals(result.getTitle(), movieEntity.getTitle());
+
+	}
+
+	@Test
+	public void updateShouldThrowResourceNotFoundExceptionWhenIdDoesNotExist() {
+
+		Assertions.assertThrows(ResourceNotFoundException.class, () -> {
+
+			service.update(nonExistingMovieId, movieDTO);
+
+		});
+		Mockito.verify(repository).getReferenceById(nonExistingMovieId);
+
+	}
+
+	@Test
+	public void deleteShouldDoNothingWhenIdExists() {
+		
+		Assertions.assertDoesNotThrow(()->{
+			service.delete(existingMovieId);
+			});
+		Mockito.verify(repository, Mockito.times(1)).deleteById(existingMovieId);
+		
+	}
+
+	@Test
+	public void deleteShouldThrowResourceNotFoundExceptionWhenIdDoesNotExist() {
+		
+		Assertions.assertThrows(ResourceNotFoundException.class, () -> {
+
+			service.delete(nonExistingMovieId);
+
+		});
+		Mockito.verify(repository).existsById(nonExistingMovieId);
+		
+	}
+
+	@Test
+	public void deleteShouldThrowDatabaseExceptionWhenDependentId() {
+		
+		Assertions.assertThrows(DatabaseException.class, () -> {
+
+			service.delete(dependentMovieId);
+
+		});
+		Mockito.verify(repository).existsById(dependentMovieId);
+		Mockito.verify(repository, Mockito.times(1)).deleteById(dependentMovieId);
+		
 		
 	}
 	
-	@Test
-	public void findByIdShouldReturnMovieDTOWhenIdExists() {
-	}
-	
-	@Test
-	public void findByIdShouldThrowResourceNotFoundExceptionWhenIdDoesNotExist() {
-	}
-	
-	@Test
-	public void insertShouldReturnMovieDTO() {
-	}
-	
-	@Test
-	public void updateShouldReturnMovieDTOWhenIdExists() {
-	}
-	
-	@Test
-	public void updateShouldThrowResourceNotFoundExceptionWhenIdDoesNotExist() {
-	}
-	
-	@Test
-	public void deleteShouldDoNothingWhenIdExists() {
-	}
-	
-	@Test
-	public void deleteShouldThrowResourceNotFoundExceptionWhenIdDoesNotExist() {
-	}
-	
-	@Test
-	public void deleteShouldThrowDatabaseExceptionWhenDependentId() {
-	}
 }
